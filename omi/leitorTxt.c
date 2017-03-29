@@ -19,14 +19,14 @@ typedef struct tipo_leitura_data
 	Leituras latitudes[180];
 } LeituraData;
 
-// typedef struct tipo_quinzena
-// {
-// 	int idQuinz;
-// 	int[] lat;
-// 	int[] lon;
-// 	int[] qtdDiasValidos;
-// 	int[] somaMedicao;
-// } Quinzena;
+typedef struct tipo_quinzena
+{
+	int idQuinz;
+	int[] lat;
+	int[] lon;
+	int[] qtdDiasValidos;
+	int[] somaMedicao;
+} Quinzena;
 
 
 
@@ -162,7 +162,7 @@ void lerArquivo(LeituraData* leiturasPorData, char file[]){
 
     }
     fclose(in);
-}
+
 
 // void agruparQuinzena(LeituraData leituras[], int qtdDias){
 // 	Quinzena quinzenas[25];
