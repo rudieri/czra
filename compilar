@@ -1,0 +1,7 @@
+#!/bin/bash
+
+
+alvo=$1
+gcc -g -std=c99 -lm -fopenmp -o "$alvo".bin $alvo
+
+chmod +x "$alvo".bin
