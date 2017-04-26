@@ -37,6 +37,7 @@
       <compileType>
         <cTool>
           <standard>3</standard>
+          <commandLine>-fopenmp</commandLine>
         </cTool>
         <linkerTool>
           <linkerLibItems>

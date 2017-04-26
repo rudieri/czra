@@ -6,6 +6,26 @@
 #include <time.h>
 #include <math.h>
 #include <omp.h>
+#include <sys/time.h>
+
+typedef struct tipo_problema {
+    int tId;
+    
+    int data;
+
+    int lat;
+    int lon;
+    int medidaAtual;
+    
+    float media;
+    float desvio;
+    int qtdValores;
+    int valores[15];
+
+    struct tipo_problema *anterior;
+    struct tipo_problema *proximo;
+
+} Problema;
 
 typedef struct tipo_leituras {
     int lat;
@@ -38,12 +58,13 @@ typedef struct tipo_lista_arquivos {
 
 
 
-
+int gettimeofday(struct timeval *restrict tp, void *restrict tzp);
 double pow(double n, double e);
 double sqrt(double n);
 void bzero(void *s, size_t n);
 FILE *fopen(const char *filename, const char *mode);
 int fclose(FILE *a_file);
+int regexec(const regex_t *preg, const char *string, size_t nmatch, regmatch_t pmatch[], int eflags);
 size_t getline(char **lineptr, size_t *n, FILE *stream);
 char *strptime(const char *buf, const char *format, struct tm *tm);
 void lerArquivo(Ano* leituraData, char file[]);
@@ -52,18 +73,19 @@ int calcularMedia(int somaMedicao, int nroDias, int somaQuadrados, float* media,
 int listarArquivos(ListaArquivos* pastaBase);
 void sequencial(int argc, char const *argv[]);
 void paralelo(int argc, char const *argv[]);
+int problemaComparador(Problema* prob1, Problema* prob2);
 
 int main(int argc, char const *argv[]) {
 
 
     paralelo(argc, argv);
-//    sequencial(argc, argv);
+    //    sequencial(argc, argv);
 
     return 0;
 }
 
 void paralelo(int argc, char const *argv[]) {
-    omp_set_num_threads(4);
+    omp_set_num_threads(1);
     //    int latIni = -40, latFin = -15, lonIni = -70, lonFin = -50, diaIni = 1, diaFin = 366;
     int latIni = -90, latFin = 90, lonIni = -180, lonFin = 180, diaIni = 1, diaFin = 366;
     printf("Arc: %i", argc);
@@ -87,6 +109,15 @@ void paralelo(int argc, char const *argv[]) {
     pastaBase.nome = "/mnt/695f96e3-9d30-4f93-a1a5-2f9262536915/omi/2012/";
     int nrArquivos = listarArquivos(&pastaBase);
 
+    // Inicializa lista de problemas
+    Problema problemas;
+    problemas.data = 0;
+    problemas.proximo = NULL;
+    problemas.anterior = NULL;
+
+    Problema* ultProblema = &problemas;
+
+    // Inicializa lista de anos/medidas
     Ano primeiro;
     primeiro.ano = 0;
     primeiro.proximo = NULL;
@@ -96,24 +127,29 @@ void paralelo(int argc, char const *argv[]) {
         lerArquivo(&primeiro, arquivo->nome);
         arquivo = arquivo->proximo;
     }
+    struct timeval tempoInicial;
+    struct timeval tempoFinal;
+    gettimeofday(&tempoInicial, NULL);
+    
 
     int myId, prop, nthreads;
     Ano* anoAux = &primeiro;
     while ((anoAux = anoAux->proximo) != NULL) {
-#pragma omp parallel private(myId) shared(nthreads, prop)
+#pragma omp parallel private(myId) shared(nthreads, prop, ultProblema)
         {
 #pragma omp single
             {
                 nthreads = omp_get_num_threads();
                 prop = (latFin - latIni) / nthreads;
             }
+            myId = omp_get_thread_num();
             int j = latIni + (prop * myId);
             int jF;
-            if (myId == nthreads - 1){
+            if (myId == nthreads - 1) {
                 jF = latFin;
-                
+
             } else {
-                jF = jF + prop;
+                jF = j + prop;
             }
             for (; j < jF; ++j) {
                 for (int k = lonIni; k < lonFin; ++k) {
@@ -130,12 +166,15 @@ void paralelo(int argc, char const *argv[]) {
                             int diasPraTras = 1;
                             int diaAux = d;
                             int ignorados = 0;
+                            int diasUsados[15];
+                            diasUsados[0] = med;
                             while (diaAux + ignorados > d - 15 && (d - diasPraTras) >= 0) {
                                 int medicao = posicao->medicoes[d - diasPraTras];
                                 //                            printf("Dia %i, medição %i\n", d, medicao);
                                 if (medicao > 0) {
                                     somaMedida += medicao;
                                     somaQuadrados += pow(medicao, 2);
+                                    diasUsados[diasPraTras - ignorados] = medicao;
                                 } else {
                                     ignorados++;
                                 }
@@ -149,13 +188,28 @@ void paralelo(int argc, char const *argv[]) {
 
 
                             if (posicao->medicoes[d] < media - (3.5 * desvioPadrao)) {
-                                struct tm data = {.tm_mday = d, .tm_year = anoAux->ano - 1900};
-                                time_t dataConv = mktime(&data);
-                                data = *localtime(&dataConv);
-                                char strData[20];
-                                strftime(strData, 20, "%d/%m/%y", &data);
-                                printf("Pre-ri-go [myId: %i, dia %s, P(%i, %i): %i, média: %f, desvio: %f\n", myId, strData,
-                                        j - 90, k - 180, posicao->medicoes[d], media, desvioPadrao);
+                                ultProblema->proximo = malloc(sizeof (Problema));
+                                ultProblema->proximo->anterior = ultProblema;
+                                ultProblema = ultProblema->proximo;
+                                ultProblema->data = anoAux->ano * 1000 + d;
+                                ultProblema->desvio = desvioPadrao;
+                                ultProblema->media = media;
+                                ultProblema->lat = j - 90;
+                                ultProblema->lat = k - 180;
+                                ultProblema->medidaAtual = posicao->medicoes[d];
+                                ultProblema->tId = myId;
+                                ultProblema->qtdValores = diasPraTras - ignorados;
+                                memcpy(ultProblema->valores, diasUsados, (diasPraTras - ignorados) * sizeof(int));
+
+
+
+//                                struct tm data = {.tm_mday = d, .tm_year = anoAux->ano - 1900};
+//                                time_t dataConv = mktime(&data);
+//                                data = *localtime(&dataConv);
+//                                char strData[20];
+//                                strftime(strData, 20, "%d/%m/%y", &data);
+//                                printf("Pre-ri-go [myId: %i, dia %s, P(%i, %i): %i, média: %f, desvio: %f\n", myId, strData,
+//                                        j - 90, k - 180, posicao->medicoes[d], media, desvioPadrao);
                                 //                            printf("Pre-ri-go [ano: %i, dia %i, P(%i, %i): %i, média: %f, desvio: %f\n", anoAux->ano, d,
                                 //                                    j - 90, k - 180, posicao->medicoes[d], media, desvioPadrao);
                                 //                        }
@@ -166,6 +220,80 @@ void paralelo(int argc, char const *argv[]) {
                 }
             }
         }
+    }
+    gettimeofday(&tempoFinal, NULL);
+
+    Problema* probAux = &problemas;
+    while (probAux->proximo != NULL) {
+        if (probAux->data == 0) {
+            probAux = probAux->proximo;
+            continue;
+        }
+        if (probAux->proximo != NULL) {
+            int cmp = problemaComparador(probAux, probAux->proximo);
+            if (cmp < 0) {
+                // trocar
+                Problema* p1 = probAux->anterior;
+                Problema* p2 = probAux;
+                Problema* p3 = probAux->proximo;
+                p1->proximo = p3;
+                p2->anterior = p3;
+                p2->proximo = p3->proximo;
+                p3->anterior = p1;
+                p3->proximo = p2;
+            } else {
+                probAux = probAux->proximo;
+            }
+        }
+
+    }
+    probAux = &problemas;
+    while (probAux->proximo != NULL) {
+        if (probAux->data == 0) {
+            probAux = probAux->proximo;
+            continue;
+        }
+
+        struct tm data = {.tm_mday = probAux->data % 1000, .tm_year = probAux->data / 1000 - 1900};
+        time_t dataConv = mktime(&data);
+        data = *localtime(&dataConv);
+        char strData[20];
+        strftime(strData, 20, "%d/%m/%y", &data);
+        printf("Pre-ri-go [myId: %i, dia %s, P(%i, %i): %i, média: %f, desvio: %f, [", probAux->tId, strData,
+                probAux->lat, probAux->lon, probAux->medidaAtual, probAux->media, probAux->desvio);
+        for(int i = 0; i < probAux->qtdValores; i++){
+            printf("%i, ", probAux->valores[i]);
+        }
+        printf("]\n");
+
+        probAux = probAux->proximo;
+    }
+    int sleep = 1;
+    while (sleep++ < 100000000);
+
+    //
+    printf("Executado em %lu milisegundos \n", (tempoFinal.tv_sec - tempoInicial.tv_sec) * 1000  + (tempoFinal.tv_usec - tempoInicial.tv_usec) / 1000);
+    printf("\n");
+
+
+}
+
+int problemaComparador(Problema* prob1, Problema* prob2) {
+    if (prob2->data < prob1->data) {
+        return -1;
+    } else if (prob2->data == prob1->data) {
+        if (prob2->lat < prob1->lat) {
+            return -1;
+        } else if (prob2->lat == prob1->lat) {
+            if (prob2->lon < prob1->lon) {
+                return -1;
+            } else if (prob2->lon == prob1->lon) {
+                return 0;
+            } else {
+                return 1;
+            }
+        }
+
     }
 }
 
@@ -380,6 +508,9 @@ void lerArquivo(Ano* agAno, char file[]) {
                 int posicao = qtdLatitudes * 180 + qtdLeitura++;
                 if (!agAno->posicoes[posicao]) {
                     agAno->posicoes[posicao] = malloc(sizeof (Posicao));
+                    for (int i = 0; i < 366; i++) {
+                        agAno->posicoes[posicao]->medicoes[i] = 0;
+                    }
                 }
                 agAno->posicoes[posicao]->medicoes[dia] = m;
                 bzero(medicao, 3);
